@@ -1,0 +1,6 @@
+{
+  "name": "Translator",
+  "description": "Translate text across multiple languages with fast, offline-ready Google ML Kit.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">Translator</string>
+    <string name="default_input_text">Hello, how are you today?</string>
+    <string name="copy_empty">Nothing to copy yet</string>
+    <string name="clipboard_label_translation">Translation</string>
+    <string name="copy_success">Translation copied to clipboard</string>
+    <string name="empty_input_error">Please enter text to translate</string>
+    <string name="progress_downloading_model">Downloading %1$s translation model...</string>
+    <string name="progress_translating">Translating to %1$s...</string>
+    <string name="translation_success">Translated to %1$s</string>
+    <string name="translation_failed">Translation failed: %1$s</string>
+    <string name="download_failed">Model download failed for %1$s: %2$s</string>
+    <string name="choose_target_language_with_selection">Selected target language is %1$s. Tap to change.</string>
+    <string name="unknown_error">An unknown error occurred</string>
+    <string name="language_route">Translate English to %1$s</string>
+    <string name="char_count">%1$d / %2$d</string>
+    <string name="error_message">Error: %1$s</string>
+    <string name="header_icon">🌐</string>
+    <string name="headline">Language Translator</string>
+    <string name="tagline">On-device neural machine translation</string>
+    <string name="source_text">Source Text (English)</string>
+    <string name="input_hint">Type or paste text to translate...</string>
+    <string name="char_count_default">0 / 500</string>
+    <string name="target_language">Target Language</string>
+    <string name="choose_target_language">Choose target language</string>
+    <string name="translating_to">Translating to</string>
+    <string name="default_target_language">Spanish</string>
+    <string name="dropdown_indicator">▾</string>
+    <string name="translate_now">Translate Now</string>
+    <string name="translation">Translation</string>
+    <string name="copy_translation">Copy Translation</string>
+    <string name="progress_translating_default">Translating...</string>
+</resources>
