@@ -30,30 +30,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -61,8 +54,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
@@ -70,7 +61,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -78,15 +68,12 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -101,8 +88,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.example.data.LanguageOption
-import com.example.data.supportedLanguages
+import com.example.ui.components.DownloadInstallingBanner
+import com.example.ui.components.LanguagePickerDropdown
+import com.example.ui.components.OfflineModelManagerDialog
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -116,10 +104,8 @@ fun TranslatorScreen(
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // TTS Audio Pronunciation Manager with lifecycle management
+    // Text-to-Speech Engine
     val ttsManager = remember { TtsManager(context) }
-    val isSpeaking by ttsManager.isSpeaking.collectAsState()
-
     DisposableEffect(Unit) {
         onDispose {
             ttsManager.shutdown()
@@ -139,7 +125,7 @@ fun TranslatorScreen(
         }
     }
 
-    // Permission launcher for microphone recording
+    // Microphone audio permission launcher
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -181,7 +167,6 @@ fun TranslatorScreen(
         }
     }
 
-    // Share Translation Action
     val onShareTranslation = {
         if (uiState.outputText.isNotBlank()) {
             val sendIntent = Intent().apply {
@@ -197,7 +182,6 @@ fun TranslatorScreen(
         }
     }
 
-    // Pronunciation Action
     val onPronounceText: (String, String) -> Unit = { text, langCode ->
         if (text.isNotBlank()) {
             ttsManager.speak(text, langCode) { warning ->
@@ -230,12 +214,11 @@ fun TranslatorScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            val isTabletOrExpanded = maxWidth >= 600.dp
+            val isTablet = maxWidth >= 600.dp
 
-            if (isTabletOrExpanded) {
+            if (isTablet) {
                 ExpandedTabletTranslatorLayout(
                     uiState = uiState,
-                    isSpeaking = isSpeaking,
                     onInputChange = viewModel::updateInputText,
                     onClearInput = viewModel::clearInput,
                     onPasteInput = {
@@ -266,7 +249,6 @@ fun TranslatorScreen(
             } else {
                 CompactPhoneTranslatorLayout(
                     uiState = uiState,
-                    isSpeaking = isSpeaking,
                     onInputChange = viewModel::updateInputText,
                     onClearInput = viewModel::clearInput,
                     onPasteInput = {
@@ -299,8 +281,7 @@ fun TranslatorScreen(
             // Offline Language Models Manager Dialog
             if (uiState.isModelManagerOpen) {
                 OfflineModelManagerDialog(
-                    downloadedCodes = uiState.downloadedModelCodes,
-                    downloadingCodes = uiState.downloadingModelCodes,
+                    uiState = uiState,
                     onDownload = viewModel::downloadModel,
                     onDelete = viewModel::deleteModel,
                     onDismiss = { viewModel.setModelManagerOpen(false) }
@@ -316,7 +297,6 @@ fun TranslatorScreen(
 @Composable
 private fun ExpandedTabletTranslatorLayout(
     uiState: TranslationUiState,
-    isSpeaking: Boolean,
     onInputChange: (String) -> Unit,
     onClearInput: () -> Unit,
     onPasteInput: () -> Unit,
@@ -398,7 +378,7 @@ private fun ExpandedTabletTranslatorLayout(
                     ) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Offline (${uiState.downloadedModelCodes.size})")
+                        Text("Offline (${uiState.downloadedCount}/${uiState.totalLanguagesCount})")
                     }
 
                     LanguagePickerDropdown(
@@ -449,9 +429,15 @@ private fun ExpandedTabletTranslatorLayout(
             }
         }
 
-        // Progress bar
+        // Active Download & Installing Progress Banner
+        DownloadInstallingBanner(
+            uiState = uiState,
+            modifier = Modifier.padding(top = 10.dp)
+        )
+
+        // Translation Progress Bar
         AnimatedVisibility(
-            visible = uiState.isLoading,
+            visible = uiState.isLoading && uiState.activeDownloadingLanguage == null,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -562,13 +548,10 @@ private fun ExpandedTabletTranslatorLayout(
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Text-to-Speech Pronounce Source
                             IconButton(
                                 onClick = { onPronounce(uiState.inputText, uiState.sourceLanguage.mlKitCode) },
                                 enabled = uiState.inputText.isNotBlank(),
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .testTag("speak_source_button")
+                                modifier = Modifier.size(40.dp).testTag("speak_source_button")
                             ) {
                                 Icon(
                                     Icons.Default.VolumeUp,
@@ -577,12 +560,9 @@ private fun ExpandedTabletTranslatorLayout(
                                 )
                             }
 
-                            // Speech-to-Text Voice Mic
                             FilledTonalIconButton(
                                 onClick = onStartSpeech,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .testTag("mic_button")
+                                modifier = Modifier.size(40.dp).testTag("mic_button")
                             ) {
                                 Icon(Icons.Default.Mic, contentDescription = "Transcribe speech", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                             }
@@ -591,9 +571,7 @@ private fun ExpandedTabletTranslatorLayout(
 
                             FilledTonalButton(
                                 onClick = onPasteInput,
-                                modifier = Modifier
-                                    .height(36.dp)
-                                    .testTag("paste_button"),
+                                modifier = Modifier.height(36.dp).testTag("paste_button"),
                                 contentPadding = PaddingValues(horizontal = 10.dp)
                             ) {
                                 Icon(Icons.Default.ContentPaste, contentDescription = "Paste", modifier = Modifier.size(16.dp))
@@ -606,15 +584,9 @@ private fun ExpandedTabletTranslatorLayout(
                             if (uiState.inputText.isNotEmpty()) {
                                 IconButton(
                                     onClick = onClearInput,
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .testTag("clear_button")
+                                    modifier = Modifier.size(36.dp).testTag("clear_button")
                                 ) {
-                                    Icon(
-                                        Icons.Default.Clear,
-                                        contentDescription = "Clear",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -692,13 +664,10 @@ private fun ExpandedTabletTranslatorLayout(
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Text-to-Speech Pronounce Translation
                             IconButton(
                                 onClick = { onPronounce(uiState.outputText, uiState.targetLanguage.mlKitCode) },
                                 enabled = uiState.outputText.isNotBlank(),
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .testTag("speak_target_button")
+                                modifier = Modifier.size(44.dp).testTag("speak_target_button")
                             ) {
                                 Icon(
                                     Icons.Default.VolumeUp,
@@ -707,13 +676,10 @@ private fun ExpandedTabletTranslatorLayout(
                                 )
                             }
 
-                            // Share Translation
                             IconButton(
                                 onClick = onShare,
                                 enabled = uiState.outputText.isNotBlank(),
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .testTag("share_button")
+                                modifier = Modifier.size(44.dp).testTag("share_button")
                             ) {
                                 Icon(
                                     Icons.Default.Share,
@@ -722,13 +688,10 @@ private fun ExpandedTabletTranslatorLayout(
                                 )
                             }
 
-                            // Copy Translation
                             IconButton(
                                 onClick = onCopyOutput,
                                 enabled = uiState.outputText.isNotBlank(),
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .testTag("copy_button")
+                                modifier = Modifier.size(44.dp).testTag("copy_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
@@ -803,7 +766,6 @@ private fun ExpandedTabletTranslatorLayout(
 @Composable
 private fun CompactPhoneTranslatorLayout(
     uiState: TranslationUiState,
-    isSpeaking: Boolean,
     onInputChange: (String) -> Unit,
     onClearInput: () -> Unit,
     onPasteInput: () -> Unit,
@@ -858,7 +820,6 @@ private fun CompactPhoneTranslatorLayout(
                             )
                         }
 
-                        // Offline Models Manager Pill
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = Color.White.copy(alpha = 0.2f),
@@ -879,7 +840,7 @@ private fun CompactPhoneTranslatorLayout(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "${uiState.downloadedModelCodes.size} Offline",
+                                    text = "${uiState.downloadedCount}/${uiState.totalLanguagesCount} Offline",
                                     color = Color.White,
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold
@@ -897,6 +858,9 @@ private fun CompactPhoneTranslatorLayout(
                 }
             }
         }
+
+        // Active Download & Installing Progress Banner
+        DownloadInstallingBanner(uiState = uiState)
 
         // Language Pair Selection & Bidirectional Swap Bar
         Surface(
@@ -929,9 +893,7 @@ private fun CompactPhoneTranslatorLayout(
 
                 FilledTonalIconButton(
                     onClick = onSwapLanguages,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .testTag("swap_button")
+                    modifier = Modifier.size(44.dp).testTag("swap_button")
                 ) {
                     Icon(
                         Icons.Default.SwapHoriz,
@@ -1019,13 +981,10 @@ private fun CompactPhoneTranslatorLayout(
                     )
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Pronounce Source
                         IconButton(
                             onClick = { onPronounce(uiState.inputText, uiState.sourceLanguage.mlKitCode) },
                             enabled = uiState.inputText.isNotBlank(),
-                            modifier = Modifier
-                                .size(40.dp)
-                                .testTag("speak_source_button")
+                            modifier = Modifier.size(40.dp).testTag("speak_source_button")
                         ) {
                             Icon(
                                 Icons.Default.VolumeUp,
@@ -1035,12 +994,9 @@ private fun CompactPhoneTranslatorLayout(
                             )
                         }
 
-                        // Microphone
                         FilledTonalIconButton(
                             onClick = onStartSpeech,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .testTag("mic_button")
+                            modifier = Modifier.size(40.dp).testTag("mic_button")
                         ) {
                             Icon(
                                 Icons.Default.Mic,
@@ -1052,12 +1008,9 @@ private fun CompactPhoneTranslatorLayout(
 
                         Spacer(modifier = Modifier.width(4.dp))
 
-                        // Paste
                         FilledTonalButton(
                             onClick = onPasteInput,
-                            modifier = Modifier
-                                .height(36.dp)
-                                .testTag("paste_button"),
+                            modifier = Modifier.height(36.dp).testTag("paste_button"),
                             contentPadding = PaddingValues(horizontal = 8.dp)
                         ) {
                             Icon(Icons.Default.ContentPaste, contentDescription = "Paste", modifier = Modifier.size(14.dp))
@@ -1065,19 +1018,12 @@ private fun CompactPhoneTranslatorLayout(
                             Text("Paste", style = MaterialTheme.typography.labelSmall)
                         }
 
-                        // Clear
                         if (uiState.inputText.isNotEmpty()) {
                             IconButton(
                                 onClick = onClearInput,
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .testTag("clear_button")
+                                modifier = Modifier.size(38.dp).testTag("clear_button")
                             ) {
-                                Icon(
-                                    Icons.Default.Clear,
-                                    contentDescription = "Clear input",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Icon(Icons.Default.Clear, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -1088,12 +1034,11 @@ private fun CompactPhoneTranslatorLayout(
                 OutlinedTextField(
                     value = uiState.inputText,
                     onValueChange = onInputChange,
+                    placeholder = { Text("Enter text to translate...") },
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(min = 120.dp)
                         .testTag("input_text_field"),
-                    minLines = 4,
-                    maxLines = 7,
-                    placeholder = { Text("Type, paste, or tap mic to speak...") },
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -1116,13 +1061,13 @@ private fun CompactPhoneTranslatorLayout(
             }
         }
 
-        // Translate Button
+        // Primary Translate Button
         Button(
             onClick = onTranslate,
             enabled = !uiState.isLoading && uiState.inputText.isNotBlank(),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp)
+                .height(52.dp)
                 .testTag("translate_button"),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
@@ -1138,20 +1083,20 @@ private fun CompactPhoneTranslatorLayout(
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = uiState.progressMessage.ifBlank { "Translating..." },
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleSmall
                 )
             } else {
-                Icon(Icons.Default.Translate, contentDescription = null)
-                Spacer(modifier = Modifier.width(10.dp))
+                Icon(Icons.Default.Translate, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Translate Now",
+                    text = "Translate to ${uiState.targetLanguage.name}",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
 
-        // Translation Result Card with TTS Speaker & Share Action
+        // Translation Result Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -1172,65 +1117,59 @@ private fun CompactPhoneTranslatorLayout(
                         Text(text = uiState.targetLanguage.flag, fontSize = 20.sp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "${uiState.targetLanguage.name} (Result)",
+                            text = "${uiState.targetLanguage.name} Translation",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        if (uiState.downloadedModelCodes.contains(uiState.targetLanguage.mlKitCode.lowercase())) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = "Offline ready",
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Pronounce Button
                         IconButton(
                             onClick = { onPronounce(uiState.outputText, uiState.targetLanguage.mlKitCode) },
                             enabled = uiState.outputText.isNotBlank(),
-                            modifier = Modifier
-                                .size(44.dp)
-                                .testTag("speak_target_button")
+                            modifier = Modifier.size(40.dp).testTag("speak_target_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.VolumeUp,
+                                Icons.Default.VolumeUp,
                                 contentDescription = "Hear translation pronunciation",
-                                tint = if (uiState.outputText.isNotBlank())
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                tint = if (uiState.outputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Share Button
                         IconButton(
                             onClick = onShare,
                             enabled = uiState.outputText.isNotBlank(),
-                            modifier = Modifier
-                                .size(44.dp)
-                                .testTag("share_button")
+                            modifier = Modifier.size(40.dp).testTag("share_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Share,
+                                Icons.Default.Share,
                                 contentDescription = "Share translation",
-                                tint = if (uiState.outputText.isNotBlank())
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                tint = if (uiState.outputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Copy Button
                         IconButton(
                             onClick = onCopyOutput,
                             enabled = uiState.outputText.isNotBlank(),
-                            modifier = Modifier
-                                .size(44.dp)
-                                .testTag("copy_button")
+                            modifier = Modifier.size(40.dp).testTag("copy_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
                                 contentDescription = "Copy translation",
-                                tint = if (uiState.outputText.isNotBlank())
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                tint = if (uiState.outputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -1241,6 +1180,7 @@ private fun CompactPhoneTranslatorLayout(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(min = 120.dp)
                         .testTag("output_text_field"),
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1258,257 +1198,30 @@ private fun CompactPhoneTranslatorLayout(
                             SelectionContainer {
                                 Text(
                                     text = uiState.outputText,
-                                    style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 24.sp),
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = 16.sp,
+                                        lineHeight = 24.sp
+                                    ),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         } else {
-                            Text(
-                                text = "Translation will appear here...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * Reusable Language Picker Dropdown
- */
-@Composable
-private fun LanguagePickerDropdown(
-    selectedLanguage: LanguageOption,
-    onSelectLanguage: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box(modifier = modifier) {
-        OutlinedCard(
-            onClick = { expanded = true },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .testTag("language_selector"),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.outlinedCardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-            ),
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.outline
-            )
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f, fill = false)
-                ) {
-                    Text(text = selectedLanguage.flag, fontSize = 20.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = selectedLanguage.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Icon(
-                    imageVector = Icons.Default.ArrowDropDown,
-                    contentDescription = "Select target language",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .widthIn(min = 220.dp)
-                .background(MaterialTheme.colorScheme.surface)
-        ) {
-            supportedLanguages.forEachIndexed { index, language ->
-                val isSelected = language.mlKitCode == selectedLanguage.mlKitCode
-                DropdownMenuItem(
-                    text = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(text = language.flag, fontSize = 20.sp)
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = language.name,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = "Selected",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    },
-                    onClick = {
-                        onSelectLanguage(index)
-                        expanded = false
-                    },
-                    modifier = Modifier.height(48.dp)
-                )
-            }
-        }
-    }
-}
-
-/**
- * Offline Language Models Manager Dialog
- */
-@Composable
-fun OfflineModelManagerDialog(
-    downloadedCodes: Set<String>,
-    downloadingCodes: Set<String>,
-    onDownload: (String) -> Unit,
-    onDelete: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.CloudDownload,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                    Text("Offline Models", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        text = "${downloadedCodes.size} of ${supportedLanguages.size} models offline (~${downloadedCodes.size * 30} MB)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "Download language models (~30 MB each) to translate text instantly without cellular data or Wi-Fi.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 380.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(supportedLanguages) { language ->
-                        val code = language.mlKitCode.lowercase()
-                        val isDownloaded = downloadedCodes.contains(code)
-                        val isDownloading = downloadingCodes.contains(code)
-
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isDownloaded) Color(0xFF10B981).copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                            Column(
+                                modifier = Modifier.align(Alignment.Center),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(text = language.flag, fontSize = 22.sp)
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = language.name,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Text(
-                                            text = if (isDownloaded) "Offline Ready • ~30 MB" else "Not downloaded",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (isDownloaded) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-
-                                when {
-                                    isDownloading -> {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(28.dp),
-                                            strokeWidth = 2.5.dp,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    isDownloaded -> {
-                                        IconButton(
-                                            onClick = { onDelete(language.mlKitCode) },
-                                            modifier = Modifier.size(40.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = "Delete ${language.name} offline model",
-                                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
-                                            )
-                                        }
-                                    }
-                                    else -> {
-                                        IconButton(
-                                            onClick = { onDownload(language.mlKitCode) },
-                                            modifier = Modifier.size(40.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Download,
-                                                contentDescription = "Download ${language.name} offline model",
-                                                tint = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-                                }
+                                Text(text = "\uD83C\uDF10", fontSize = 30.sp)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Translation will appear here",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Done")
-            }
         }
-    )
+    }
 }

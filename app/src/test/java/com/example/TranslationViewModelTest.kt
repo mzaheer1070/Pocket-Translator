@@ -1,6 +1,8 @@
 package com.example
 
+import androidx.test.core.app.ApplicationProvider
 import com.example.ui.TranslationViewModel
+import com.google.mlkit.common.sdkinternal.MlKitContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -17,6 +19,8 @@ class TranslationViewModelTest {
 
     @Before
     fun setup() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        MlKitContext.initializeIfNeeded(context)
         viewModel = TranslationViewModel()
     }
 
@@ -61,4 +65,15 @@ class TranslationViewModelTest {
         assertEquals("Spanish", state.sourceLanguage.name)
         assertEquals("English", state.targetLanguage.name)
     }
+
+    @Test
+    fun storageMetrics_calculateCorrectly() {
+        val state = viewModel.uiState.value
+        assertEquals(12, state.totalLanguagesCount)
+        assertEquals(0, state.downloadedCount)
+        assertEquals(0, state.usedStorageMb)
+        assertEquals(12 * 30, state.totalStorageMb)
+        assertEquals(0f, state.storageRatio, 0.001f)
+    }
 }
+

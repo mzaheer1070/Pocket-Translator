@@ -15,6 +15,8 @@ import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +35,7 @@ data class TranslationUiState(
     val detectedLanguageCode: String? = null,
     val downloadedModelCodes: Set<String> = emptySet(),
     val downloadingModelCodes: Set<String> = emptySet(),
+    val downloadProgressMap: Map<String, Float> = emptyMap(), // Language code -> float 0.0f..1.0f
     val errorMessage: String? = null,
     val userMessage: String? = null
 ) {
@@ -54,7 +57,28 @@ data class TranslationUiState(
     val maxCharacters: Int = 500
 
     val isCurrentTargetOffline: Boolean
-        get() = downloadedModelCodes.contains(selectedLanguage.mlKitCode.lowercase())
+        get() = downloadedModelCodes.contains(targetLanguage.mlKitCode.lowercase())
+
+    val totalLanguagesCount: Int
+        get() = supportedLanguages.size
+
+    val downloadedCount: Int
+        get() = downloadedModelCodes.size
+
+    val usedStorageMb: Int
+        get() = downloadedCount * 30
+
+    val totalStorageMb: Int
+        get() = totalLanguagesCount * 30
+
+    val storageRatio: Float
+        get() = if (totalLanguagesCount > 0) downloadedCount.toFloat() / totalLanguagesCount else 0f
+
+    val activeDownloadingLanguage: LanguageOption?
+        get() = downloadingModelCodes.firstOrNull()?.let { getLanguageByCode(it) }
+
+    val activeDownloadProgress: Float
+        get() = downloadingModelCodes.firstOrNull()?.let { downloadProgressMap[it] } ?: 0f
 }
 
 class TranslationViewModel : ViewModel() {
@@ -65,6 +89,7 @@ class TranslationViewModel : ViewModel() {
     private var currentTranslator: Translator? = null
     private val modelManager = RemoteModelManager.getInstance()
     private val languageIdentifier: LanguageIdentifier = LanguageIdentification.getClient()
+    private val downloadJobs = mutableMapOf<String, Job>()
 
     init {
         refreshDownloadedModels()
@@ -97,7 +122,6 @@ class TranslationViewModel : ViewModel() {
     fun toggleSwapLanguages() {
         _uiState.update { current ->
             val newReversed = !current.isReversed
-            val newSource = if (newReversed) current.selectedLanguage else englishOption
             current.copy(
                 isReversed = newReversed,
                 inputText = current.outputText.ifBlank { current.inputText },
@@ -191,7 +215,7 @@ class TranslationViewModel : ViewModel() {
             }
     }
 
-    // --- Offline Model Management ---
+    // --- Offline Model Management & Download Progress ---
 
     fun refreshDownloadedModels() {
         modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
@@ -206,7 +230,32 @@ class TranslationViewModel : ViewModel() {
 
     fun downloadModel(languageCode: String) {
         val normalizedCode = languageCode.lowercase()
-        _uiState.update { it.copy(downloadingModelCodes = it.downloadingModelCodes + normalizedCode) }
+        if (_uiState.value.downloadingModelCodes.contains(normalizedCode)) return
+
+        _uiState.update { current ->
+            current.copy(
+                downloadingModelCodes = current.downloadingModelCodes + normalizedCode,
+                downloadProgressMap = current.downloadProgressMap + (normalizedCode to 0.05f)
+            )
+        }
+
+        // Start progressive download progress ticker
+        downloadJobs[normalizedCode]?.cancel()
+        downloadJobs[normalizedCode] = viewModelScope.launch {
+            var progress = 0.05f
+            while (progress < 0.92f) {
+                delay(180)
+                progress += 0.04f + (Math.random().toFloat() * 0.04f)
+                if (progress > 0.92f) progress = 0.92f
+                _uiState.update { current ->
+                    if (current.downloadingModelCodes.contains(normalizedCode)) {
+                        current.copy(downloadProgressMap = current.downloadProgressMap + (normalizedCode to progress))
+                    } else {
+                        current
+                    }
+                }
+            }
+        }
 
         val model = TranslateRemoteModel.Builder(languageCode).build()
         val conditions = DownloadConditions.Builder().build()
@@ -214,19 +263,35 @@ class TranslationViewModel : ViewModel() {
         modelManager.download(model, conditions)
             .addOnSuccessListener {
                 val langName = getLanguageByCode(languageCode)?.name ?: languageCode
-                _uiState.update { current ->
-                    current.copy(
-                        downloadingModelCodes = current.downloadingModelCodes - normalizedCode,
-                        downloadedModelCodes = current.downloadedModelCodes + normalizedCode,
-                        userMessage = "$langName offline model downloaded"
-                    )
+                downloadJobs[normalizedCode]?.cancel()
+                downloadJobs.remove(normalizedCode)
+
+                viewModelScope.launch {
+                    // Complete progress to 100%
+                    _uiState.update { current ->
+                        current.copy(
+                            downloadProgressMap = current.downloadProgressMap + (normalizedCode to 1.0f)
+                        )
+                    }
+                    delay(350)
+                    _uiState.update { current ->
+                        current.copy(
+                            downloadingModelCodes = current.downloadingModelCodes - normalizedCode,
+                            downloadProgressMap = current.downloadProgressMap - normalizedCode,
+                            downloadedModelCodes = current.downloadedModelCodes + normalizedCode,
+                            userMessage = "$langName offline model installed (~30 MB)"
+                        )
+                    }
                 }
             }
             .addOnFailureListener { error ->
                 val langName = getLanguageByCode(languageCode)?.name ?: languageCode
+                downloadJobs[normalizedCode]?.cancel()
+                downloadJobs.remove(normalizedCode)
                 _uiState.update { current ->
                     current.copy(
                         downloadingModelCodes = current.downloadingModelCodes - normalizedCode,
+                        downloadProgressMap = current.downloadProgressMap - normalizedCode,
                         errorMessage = "Failed to download $langName model: ${error.localizedMessage ?: "Network error"}"
                     )
                 }
@@ -270,12 +335,13 @@ class TranslationViewModel : ViewModel() {
 
         val sourceLang = currentState.sourceLanguage
         val targetLang = currentState.targetLanguage
+        val targetCode = targetLang.mlKitCode.lowercase()
 
-        val isTargetOffline = currentState.downloadedModelCodes.contains(targetLang.mlKitCode.lowercase())
+        val isTargetOffline = currentState.downloadedModelCodes.contains(targetCode)
         val progressMsg = if (isTargetOffline) {
             "Translating to ${targetLang.name}..."
         } else {
-            "Downloading ${targetLang.name} model..."
+            "Downloading & installing ${targetLang.name} model (~30 MB)..."
         }
 
         _uiState.update {
@@ -284,6 +350,10 @@ class TranslationViewModel : ViewModel() {
                 progressMessage = progressMsg,
                 errorMessage = null
             )
+        }
+
+        if (!isTargetOffline) {
+            downloadModel(targetLang.mlKitCode)
         }
 
         currentTranslator?.close()
@@ -303,7 +373,7 @@ class TranslationViewModel : ViewModel() {
 
                 _uiState.update { current ->
                     current.copy(
-                        downloadedModelCodes = current.downloadedModelCodes + targetLang.mlKitCode.lowercase(),
+                        downloadedModelCodes = current.downloadedModelCodes + targetCode,
                         progressMessage = "Translating to ${targetLang.name}..."
                     )
                 }
@@ -349,5 +419,7 @@ class TranslationViewModel : ViewModel() {
         currentTranslator?.close()
         currentTranslator = null
         languageIdentifier.close()
+        downloadJobs.values.forEach { it.cancel() }
+        downloadJobs.clear()
     }
 }
