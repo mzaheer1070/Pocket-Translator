@@ -8,6 +8,8 @@ import com.example.data.getLanguageByCode
 import com.example.data.supportedLanguages
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.nl.languageid.LanguageIdentification
+import com.google.mlkit.nl.languageid.LanguageIdentifier
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
@@ -28,6 +30,7 @@ data class TranslationUiState(
     val progressMessage: String = "",
     val isListeningSpeech: Boolean = false,
     val isModelManagerOpen: Boolean = false,
+    val detectedLanguageCode: String? = null,
     val downloadedModelCodes: Set<String> = emptySet(),
     val downloadingModelCodes: Set<String> = emptySet(),
     val errorMessage: String? = null,
@@ -42,13 +45,16 @@ data class TranslationUiState(
     val targetLanguage: LanguageOption
         get() = if (isReversed) englishOption else selectedLanguage
 
+    val detectedLanguage: LanguageOption?
+        get() = detectedLanguageCode?.let { getLanguageByCode(it) }
+
     val characterCount: Int
         get() = inputText.length
 
     val maxCharacters: Int = 500
 
     val isCurrentTargetOffline: Boolean
-        get() = downloadedModelCodes.contains(selectedLanguage.mlKitCode)
+        get() = downloadedModelCodes.contains(selectedLanguage.mlKitCode.lowercase())
 }
 
 class TranslationViewModel : ViewModel() {
@@ -58,18 +64,28 @@ class TranslationViewModel : ViewModel() {
 
     private var currentTranslator: Translator? = null
     private val modelManager = RemoteModelManager.getInstance()
+    private val languageIdentifier: LanguageIdentifier = LanguageIdentification.getClient()
 
     init {
         refreshDownloadedModels()
+        detectLanguage(_uiState.value.inputText)
     }
 
     fun updateInputText(newText: String) {
         val safeText = if (newText.length > 500) newText.take(500) else newText
         _uiState.update { it.copy(inputText = safeText, errorMessage = null) }
+        detectLanguage(safeText)
     }
 
     fun clearInput() {
-        _uiState.update { it.copy(inputText = "", outputText = "", errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                inputText = "",
+                outputText = "",
+                detectedLanguageCode = null,
+                errorMessage = null
+            )
+        }
     }
 
     fun selectLanguage(index: Int) {
@@ -80,12 +96,43 @@ class TranslationViewModel : ViewModel() {
 
     fun toggleSwapLanguages() {
         _uiState.update { current ->
+            val newReversed = !current.isReversed
+            val newSource = if (newReversed) current.selectedLanguage else englishOption
             current.copy(
-                isReversed = !current.isReversed,
+                isReversed = newReversed,
                 inputText = current.outputText.ifBlank { current.inputText },
                 outputText = if (current.outputText.isNotBlank()) current.inputText else "",
                 errorMessage = null
             )
+        }
+        detectLanguage(_uiState.value.inputText)
+    }
+
+    fun applyDetectedLanguage() {
+        val detected = _uiState.value.detectedLanguage ?: return
+        val currentSource = _uiState.value.sourceLanguage
+
+        if (detected.mlKitCode.equals(currentSource.mlKitCode, ignoreCase = true)) {
+            return
+        }
+
+        if (detected.mlKitCode.equals(TranslateLanguage.ENGLISH, ignoreCase = true)) {
+            // Source should be English, target can stay foreign
+            if (_uiState.value.isReversed) {
+                _uiState.update { it.copy(isReversed = false, userMessage = "Switched source to English") }
+            }
+        } else {
+            // Source is foreign language (e.g. Spanish)
+            val index = supportedLanguages.indexOfFirst { it.mlKitCode.equals(detected.mlKitCode, ignoreCase = true) }
+            if (index >= 0) {
+                _uiState.update {
+                    it.copy(
+                        selectedLanguageIndex = index,
+                        isReversed = true,
+                        userMessage = "Switched source to ${detected.name}"
+                    )
+                }
+            }
         }
     }
 
@@ -111,6 +158,7 @@ class TranslationViewModel : ViewModel() {
                 userMessage = "Speech transcribed"
             )
         }
+        detectLanguage(_uiState.value.inputText)
     }
 
     fun clearUserMessage() {
@@ -119,6 +167,28 @@ class TranslationViewModel : ViewModel() {
 
     fun clearErrorMessage() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    // --- Automatic Language Identification ---
+
+    private fun detectLanguage(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.length < 3) {
+            _uiState.update { it.copy(detectedLanguageCode = null) }
+            return
+        }
+
+        languageIdentifier.identifyLanguage(trimmed)
+            .addOnSuccessListener { languageCode ->
+                if (languageCode != null && languageCode != "und") {
+                    _uiState.update { it.copy(detectedLanguageCode = languageCode.lowercase()) }
+                } else {
+                    _uiState.update { it.copy(detectedLanguageCode = null) }
+                }
+            }
+            .addOnFailureListener {
+                _uiState.update { it.copy(detectedLanguageCode = null) }
+            }
     }
 
     // --- Offline Model Management ---
@@ -130,7 +200,7 @@ class TranslationViewModel : ViewModel() {
                 _uiState.update { it.copy(downloadedModelCodes = codes) }
             }
             .addOnFailureListener {
-                // Keep existing cached state if lookup fails
+                // Keep existing cached state
             }
     }
 
@@ -231,7 +301,6 @@ class TranslationViewModel : ViewModel() {
             .addOnSuccessListener {
                 if (currentTranslator !== translator) return@addOnSuccessListener
 
-                // Mark model as downloaded in our state
                 _uiState.update { current ->
                     current.copy(
                         downloadedModelCodes = current.downloadedModelCodes + targetLang.mlKitCode.lowercase(),
@@ -279,5 +348,6 @@ class TranslationViewModel : ViewModel() {
         super.onCleared()
         currentTranslator?.close()
         currentTranslator = null
+        languageIdentifier.close()
     }
 }

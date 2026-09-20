@@ -1,6 +1,7 @@
 package com.example.data
 
 import com.google.mlkit.nl.translate.TranslateLanguage
+import java.util.Locale
 
 data class LanguageOption(
     val name: String,
@@ -28,4 +29,23 @@ val supportedLanguages = listOf(
 fun getLanguageByCode(code: String): LanguageOption? {
     if (code.equals(TranslateLanguage.ENGLISH, ignoreCase = true)) return englishOption
     return supportedLanguages.firstOrNull { it.mlKitCode.equals(code, ignoreCase = true) }
+}
+
+fun getLocaleForLanguageCode(code: String): Locale {
+    return when (code.lowercase()) {
+        "es" -> Locale("es")
+        "fr" -> Locale.FRENCH
+        "de" -> Locale.GERMAN
+        "it" -> Locale.ITALIAN
+        "zh" -> Locale.CHINESE
+        "ja" -> Locale.JAPANESE
+        "ar" -> Locale("ar")
+        "hi" -> Locale("hi", "IN")
+        "ko" -> Locale.KOREAN
+        "ru" -> Locale("ru")
+        "pt" -> Locale("pt")
+        "nl" -> Locale("nl")
+        "en" -> Locale.ENGLISH
+        else -> Locale(code)
+    }
 }

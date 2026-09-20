@@ -39,6 +39,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
@@ -48,9 +49,13 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -63,10 +68,8 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -77,6 +80,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -111,6 +115,16 @@ fun TranslatorScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // TTS Audio Pronunciation Manager with lifecycle management
+    val ttsManager = remember { TtsManager(context) }
+    val isSpeaking by ttsManager.isSpeaking.collectAsState()
+
+    DisposableEffect(Unit) {
+        onDispose {
+            ttsManager.shutdown()
+        }
+    }
 
     // Speech-to-text recognizer launcher
     val speechRecognizerLauncher = rememberLauncherForActivityResult(
@@ -167,6 +181,31 @@ fun TranslatorScreen(
         }
     }
 
+    // Share Translation Action
+    val onShareTranslation = {
+        if (uiState.outputText.isNotBlank()) {
+            val sendIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                putExtra(
+                    Intent.EXTRA_TEXT,
+                    "${uiState.outputText}\n\n[Translated to ${uiState.targetLanguage.name} via Translator]"
+                )
+                type = "text/plain"
+            }
+            val shareIntent = Intent.createChooser(sendIntent, "Share translation via")
+            context.startActivity(shareIntent)
+        }
+    }
+
+    // Pronunciation Action
+    val onPronounceText: (String, String) -> Unit = { text, langCode ->
+        if (text.isNotBlank()) {
+            ttsManager.speak(text, langCode) { warning ->
+                Toast.makeText(context, warning, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     LaunchedEffect(uiState.userMessage) {
         uiState.userMessage?.let {
             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
@@ -196,6 +235,7 @@ fun TranslatorScreen(
             if (isTabletOrExpanded) {
                 ExpandedTabletTranslatorLayout(
                     uiState = uiState,
+                    isSpeaking = isSpeaking,
                     onInputChange = viewModel::updateInputText,
                     onClearInput = viewModel::clearInput,
                     onPasteInput = {
@@ -209,8 +249,11 @@ fun TranslatorScreen(
                     onStartSpeech = onStartSpeechToText,
                     onSelectLanguage = viewModel::selectLanguage,
                     onSwapLanguages = viewModel::toggleSwapLanguages,
+                    onApplyDetectedLanguage = viewModel::applyDetectedLanguage,
                     onOpenModelManager = { viewModel.setModelManagerOpen(true) },
                     onTranslate = viewModel::translate,
+                    onPronounce = onPronounceText,
+                    onShare = onShareTranslation,
                     onCopyOutput = {
                         if (uiState.outputText.isNotBlank()) {
                             clipboardManager.setText(AnnotatedString(uiState.outputText))
@@ -223,6 +266,7 @@ fun TranslatorScreen(
             } else {
                 CompactPhoneTranslatorLayout(
                     uiState = uiState,
+                    isSpeaking = isSpeaking,
                     onInputChange = viewModel::updateInputText,
                     onClearInput = viewModel::clearInput,
                     onPasteInput = {
@@ -236,8 +280,11 @@ fun TranslatorScreen(
                     onStartSpeech = onStartSpeechToText,
                     onSelectLanguage = viewModel::selectLanguage,
                     onSwapLanguages = viewModel::toggleSwapLanguages,
+                    onApplyDetectedLanguage = viewModel::applyDetectedLanguage,
                     onOpenModelManager = { viewModel.setModelManagerOpen(true) },
                     onTranslate = viewModel::translate,
+                    onPronounce = onPronounceText,
+                    onShare = onShareTranslation,
                     onCopyOutput = {
                         if (uiState.outputText.isNotBlank()) {
                             clipboardManager.setText(AnnotatedString(uiState.outputText))
@@ -264,21 +311,23 @@ fun TranslatorScreen(
 }
 
 /**
- * Tablet and Wide Screen Layout:
- * Command bar with offline models badge, bidirectional swap button, language picker,
- * and dual full-height panes.
+ * Tablet & Landscape Layout
  */
 @Composable
 private fun ExpandedTabletTranslatorLayout(
     uiState: TranslationUiState,
+    isSpeaking: Boolean,
     onInputChange: (String) -> Unit,
     onClearInput: () -> Unit,
     onPasteInput: () -> Unit,
     onStartSpeech: () -> Unit,
     onSelectLanguage: (Int) -> Unit,
     onSwapLanguages: () -> Unit,
+    onApplyDetectedLanguage: () -> Unit,
     onOpenModelManager: () -> Unit,
     onTranslate: () -> Unit,
+    onPronounce: (String, String) -> Unit,
+    onShare: () -> Unit,
     onCopyOutput: () -> Unit
 ) {
     Column(
@@ -286,7 +335,7 @@ private fun ExpandedTabletTranslatorLayout(
             .fillMaxSize()
             .padding(horizontal = 24.dp, vertical = 20.dp)
     ) {
-        // Tablet Top Bar
+        // Top Command Bar
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -329,7 +378,7 @@ private fun ExpandedTabletTranslatorLayout(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Offline ML Kit • Voice Input Enabled",
+                            text = "Auto-Language Detection • Audio TTS • Offline ML Kit",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -340,7 +389,6 @@ private fun ExpandedTabletTranslatorLayout(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Offline Models Manager Trigger
                     FilledTonalButton(
                         onClick = onOpenModelManager,
                         modifier = Modifier
@@ -353,14 +401,12 @@ private fun ExpandedTabletTranslatorLayout(
                         Text("Offline (${uiState.downloadedModelCodes.size})")
                     }
 
-                    // Source to Target Picker with Swap
                     LanguagePickerDropdown(
                         selectedLanguage = uiState.selectedLanguage,
                         onSelectLanguage = onSelectLanguage,
                         modifier = Modifier.widthIn(min = 160.dp)
                     )
 
-                    // Bidirectional Swap Button
                     FilledTonalIconButton(
                         onClick = onSwapLanguages,
                         modifier = Modifier
@@ -369,7 +415,7 @@ private fun ExpandedTabletTranslatorLayout(
                     ) {
                         Icon(
                             Icons.Default.SwapHoriz,
-                            contentDescription = "Swap source and target languages",
+                            contentDescription = "Swap languages",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -403,7 +449,7 @@ private fun ExpandedTabletTranslatorLayout(
             }
         }
 
-        // Progress bar for model downloading/translating
+        // Progress bar
         AnimatedVisibility(
             visible = uiState.isLoading,
             enter = fadeIn(),
@@ -412,7 +458,7 @@ private fun ExpandedTabletTranslatorLayout(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp)
+                    .padding(top = 10.dp)
             ) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().height(4.dp),
@@ -427,7 +473,56 @@ private fun ExpandedTabletTranslatorLayout(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        // Auto-Language Detection Suggestion Banner
+        val detected = uiState.detectedLanguage
+        if (detected != null && !detected.mlKitCode.equals(uiState.sourceLanguage.mlKitCode, ignoreCase = true)) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Detected language: ${detected.flag} ${detected.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+
+                    AssistChip(
+                        onClick = onApplyDetectedLanguage,
+                        label = { Text("Set as Source") },
+                        leadingIcon = {
+                            Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            labelColor = MaterialTheme.colorScheme.onPrimary,
+                            leadingIconContentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Side-by-Side Dual Panes
         Row(
@@ -436,7 +531,7 @@ private fun ExpandedTabletTranslatorLayout(
                 .weight(1f),
             horizontalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Left Pane: Source Input
+            // Left: Source Card
             Card(
                 modifier = Modifier
                     .weight(1f)
@@ -467,18 +562,26 @@ private fun ExpandedTabletTranslatorLayout(
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "${uiState.characterCount} / ${uiState.maxCharacters}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(end = 8.dp)
-                            )
+                            // Text-to-Speech Pronounce Source
+                            IconButton(
+                                onClick = { onPronounce(uiState.inputText, uiState.sourceLanguage.mlKitCode) },
+                                enabled = uiState.inputText.isNotBlank(),
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .testTag("speak_source_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.VolumeUp,
+                                    contentDescription = "Pronounce source text",
+                                    tint = if (uiState.inputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
+                            }
 
-                            // Voice Input (Mic)
+                            // Speech-to-Text Voice Mic
                             FilledTonalIconButton(
                                 onClick = onStartSpeech,
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(40.dp)
                                     .testTag("mic_button")
                             ) {
                                 Icon(Icons.Default.Mic, contentDescription = "Transcribe speech", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
@@ -486,7 +589,6 @@ private fun ExpandedTabletTranslatorLayout(
 
                             Spacer(modifier = Modifier.width(6.dp))
 
-                            // Paste Action
                             FilledTonalButton(
                                 onClick = onPasteInput,
                                 modifier = Modifier
@@ -494,14 +596,13 @@ private fun ExpandedTabletTranslatorLayout(
                                     .testTag("paste_button"),
                                 contentPadding = PaddingValues(horizontal = 10.dp)
                             ) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = "Paste text", modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.ContentPaste, contentDescription = "Paste", modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Paste", style = MaterialTheme.typography.labelMedium)
                             }
 
                             Spacer(modifier = Modifier.width(6.dp))
 
-                            // Clear Action
                             if (uiState.inputText.isNotEmpty()) {
                                 IconButton(
                                     onClick = onClearInput,
@@ -511,7 +612,7 @@ private fun ExpandedTabletTranslatorLayout(
                                 ) {
                                     Icon(
                                         Icons.Default.Clear,
-                                        contentDescription = "Clear input",
+                                        contentDescription = "Clear",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -524,7 +625,7 @@ private fun ExpandedTabletTranslatorLayout(
                     OutlinedTextField(
                         value = uiState.inputText,
                         onValueChange = onInputChange,
-                        placeholder = { Text("Type, paste, or speak text to translate...") },
+                        placeholder = { Text("Type, paste, or tap mic to speak...") },
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
@@ -535,10 +636,23 @@ private fun ExpandedTabletTranslatorLayout(
                             unfocusedBorderColor = MaterialTheme.colorScheme.outline
                         )
                     )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Text(
+                            text = "${uiState.characterCount} / ${uiState.maxCharacters}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
-            // Right Pane: Translation Output
+            // Right: Translation Output Card
             Card(
                 modifier = Modifier
                     .weight(1f)
@@ -577,21 +691,51 @@ private fun ExpandedTabletTranslatorLayout(
                             }
                         }
 
-                        IconButton(
-                            onClick = onCopyOutput,
-                            enabled = uiState.outputText.isNotBlank(),
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("copy_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy translation",
-                                tint = if (uiState.outputText.isNotBlank())
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Text-to-Speech Pronounce Translation
+                            IconButton(
+                                onClick = { onPronounce(uiState.outputText, uiState.targetLanguage.mlKitCode) },
+                                enabled = uiState.outputText.isNotBlank(),
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .testTag("speak_target_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.VolumeUp,
+                                    contentDescription = "Hear translation pronunciation",
+                                    tint = if (uiState.outputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
+                            }
+
+                            // Share Translation
+                            IconButton(
+                                onClick = onShare,
+                                enabled = uiState.outputText.isNotBlank(),
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .testTag("share_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.Share,
+                                    contentDescription = "Share translation",
+                                    tint = if (uiState.outputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
+                            }
+
+                            // Copy Translation
+                            IconButton(
+                                onClick = onCopyOutput,
+                                enabled = uiState.outputText.isNotBlank(),
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .testTag("copy_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy translation",
+                                    tint = if (uiState.outputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
+                            }
                         }
                     }
 
@@ -654,21 +798,23 @@ private fun ExpandedTabletTranslatorLayout(
 }
 
 /**
- * Compact Phone Layout:
- * With IME padding, voice input microphone, offline model manager chip,
- * and bidirectional language swapping.
+ * Compact Phone Screen Layout
  */
 @Composable
 private fun CompactPhoneTranslatorLayout(
     uiState: TranslationUiState,
+    isSpeaking: Boolean,
     onInputChange: (String) -> Unit,
     onClearInput: () -> Unit,
     onPasteInput: () -> Unit,
     onStartSpeech: () -> Unit,
     onSelectLanguage: (Int) -> Unit,
     onSwapLanguages: () -> Unit,
+    onApplyDetectedLanguage: () -> Unit,
     onOpenModelManager: () -> Unit,
     onTranslate: () -> Unit,
+    onPronounce: (String, String) -> Unit,
+    onShare: () -> Unit,
     onCopyOutput: () -> Unit
 ) {
     Column(
@@ -677,9 +823,9 @@ private fun CompactPhoneTranslatorLayout(
             .verticalScroll(rememberScrollState())
             .imePadding()
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Hero Header Card with Offline Status Action
+        // Hero Header Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
@@ -702,7 +848,7 @@ private fun CompactPhoneTranslatorLayout(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = "\uD83C\uDF10", fontSize = 30.sp)
+                            Text(text = "\uD83C\uDF10", fontSize = 28.sp)
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = "Translator",
@@ -744,7 +890,7 @@ private fun CompactPhoneTranslatorLayout(
 
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "On-device ML translation with voice transcription",
+                        text = "Auto-Detect • Audio TTS • Offline ML Kit",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.85f)
                     )
@@ -766,7 +912,6 @@ private fun CompactPhoneTranslatorLayout(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Source Language Label
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
@@ -782,7 +927,6 @@ private fun CompactPhoneTranslatorLayout(
                     )
                 }
 
-                // Swap Button
                 FilledTonalIconButton(
                     onClick = onSwapLanguages,
                     modifier = Modifier
@@ -796,7 +940,6 @@ private fun CompactPhoneTranslatorLayout(
                     )
                 }
 
-                // Target Language Picker
                 Box(modifier = Modifier.weight(1.3f)) {
                     LanguagePickerDropdown(
                         selectedLanguage = uiState.selectedLanguage,
@@ -807,7 +950,51 @@ private fun CompactPhoneTranslatorLayout(
             }
         }
 
-        // Source Text Input Card with Voice Mic, Clear, & Paste
+        // Auto-Language Detection Chip
+        val detected = uiState.detectedLanguage
+        if (detected != null && !detected.mlKitCode.equals(uiState.sourceLanguage.mlKitCode, ignoreCase = true)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Detected: ${detected.flag} ${detected.name}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+
+                    AssistChip(
+                        onClick = onApplyDetectedLanguage,
+                        label = { Text("Use", style = MaterialTheme.typography.labelSmall) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            labelColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier.height(32.dp)
+                    )
+                }
+            }
+        }
+
+        // Source Text Input Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -832,7 +1019,23 @@ private fun CompactPhoneTranslatorLayout(
                     )
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Microphone Speech Input
+                        // Pronounce Source
+                        IconButton(
+                            onClick = { onPronounce(uiState.inputText, uiState.sourceLanguage.mlKitCode) },
+                            enabled = uiState.inputText.isNotBlank(),
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("speak_source_button")
+                        ) {
+                            Icon(
+                                Icons.Default.VolumeUp,
+                                contentDescription = "Pronounce source text",
+                                tint = if (uiState.inputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Microphone
                         FilledTonalIconButton(
                             onClick = onStartSpeech,
                             modifier = Modifier
@@ -842,18 +1045,18 @@ private fun CompactPhoneTranslatorLayout(
                             Icon(
                                 Icons.Default.Mic,
                                 contentDescription = "Transcribe speech",
-                                modifier = Modifier.size(20.dp),
+                                modifier = Modifier.size(18.dp),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
 
-                        // Paste Button
+                        // Paste
                         FilledTonalButton(
                             onClick = onPasteInput,
                             modifier = Modifier
-                                .height(38.dp)
+                                .height(36.dp)
                                 .testTag("paste_button"),
                             contentPadding = PaddingValues(horizontal = 8.dp)
                         ) {
@@ -862,12 +1065,12 @@ private fun CompactPhoneTranslatorLayout(
                             Text("Paste", style = MaterialTheme.typography.labelSmall)
                         }
 
-                        // Clear Button
+                        // Clear
                         if (uiState.inputText.isNotEmpty()) {
                             IconButton(
                                 onClick = onClearInput,
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(38.dp)
                                     .testTag("clear_button")
                             ) {
                                 Icon(
@@ -919,7 +1122,7 @@ private fun CompactPhoneTranslatorLayout(
             enabled = !uiState.isLoading && uiState.inputText.isNotBlank(),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
+                .height(54.dp)
                 .testTag("translate_button"),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
@@ -948,7 +1151,7 @@ private fun CompactPhoneTranslatorLayout(
             }
         }
 
-        // Translation Result Card
+        // Translation Result Card with TTS Speaker & Share Action
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -976,21 +1179,60 @@ private fun CompactPhoneTranslatorLayout(
                         )
                     }
 
-                    IconButton(
-                        onClick = onCopyOutput,
-                        enabled = uiState.outputText.isNotBlank(),
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("copy_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy translation",
-                            tint = if (uiState.outputText.isNotBlank())
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Pronounce Button
+                        IconButton(
+                            onClick = { onPronounce(uiState.outputText, uiState.targetLanguage.mlKitCode) },
+                            enabled = uiState.outputText.isNotBlank(),
+                            modifier = Modifier
+                                .size(44.dp)
+                                .testTag("speak_target_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VolumeUp,
+                                contentDescription = "Hear translation pronunciation",
+                                tint = if (uiState.outputText.isNotBlank())
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        }
+
+                        // Share Button
+                        IconButton(
+                            onClick = onShare,
+                            enabled = uiState.outputText.isNotBlank(),
+                            modifier = Modifier
+                                .size(44.dp)
+                                .testTag("share_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Share translation",
+                                tint = if (uiState.outputText.isNotBlank())
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        }
+
+                        // Copy Button
+                        IconButton(
+                            onClick = onCopyOutput,
+                            enabled = uiState.outputText.isNotBlank(),
+                            modifier = Modifier
+                                .size(44.dp)
+                                .testTag("copy_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy translation",
+                                tint = if (uiState.outputText.isNotBlank())
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        }
                     }
                 }
 
@@ -1139,7 +1381,6 @@ private fun LanguagePickerDropdown(
 
 /**
  * Offline Language Models Manager Dialog
- * Allows users to inspect, download, and delete on-device translation language models
  */
 @Composable
 fun OfflineModelManagerDialog(
